@@ -1,0 +1,444 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users and Roles
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  passwordHash String   @map("password_hash")
+  firstName   String   @map("first_name")
+  lastName    String   @map("last_name")
+  role        Role
+  schoolId    String?  @map("school_id")
+  departmentId String? @map("department_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  school     School?     @relation(fields: [schoolId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  // User can create events, approve them, receive notifications
+  createdEvents     Event[]
+  approvalSteps     ApprovalStep[]
+  receivedNotifications Notification[]
+
+  @@map("users")
+}
+
+enum Role {
+  EVENT_COORDINATOR
+  HOD
+  DEAN
+  INSTITUTIONAL_HEAD
+  ADMIN_ITC
+}
+
+model School {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  departments Department[]
+  users       User[]
+  events      Event[]
+
+  @@map("schools")
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String
+  code      String
+  schoolId  String   @map("school_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  school School @relation(fields: [schoolId], references: [id])
+  users  User[]
+  events Event[]
+
+  @@unique([schoolId, code])
+  @@map("departments")
+}
+
+// Events System
+model Event {
+  id                 String        @id @default(cuid())
+  title              String
+  description        String?
+  scheduleStart      DateTime      @map("schedule_start")
+  scheduleEnd        DateTime      @map("schedule_end")
+  participantCount   Int           @map("participant_count")
+  venueTypePreference String?      @map("venue_type_preference")
+  status             EventStatus
+  approvalStage      ApprovalStage @map("approval_stage")
+  priorityScore      Int           @default(0) @map("priority_score")
+  optimisticVersion  Int           @default(0) @map("optimistic_version")
+  rejectionReason    String?       @map("rejection_reason")
+  
+  // Relations
+  coordinatorId String  @map("coordinator_id")
+  schoolId      String  @map("school_id")
+  departmentId  String  @map("department_id")
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  coordinator User       @relation(fields: [coordinatorId], references: [id])
+  school      School     @relation(fields: [schoolId], references: [id])
+  department  Department @relation(fields: [departmentId], references: [id])
+
+  // Related models
+  eventRequests         EventRequest[]
+  resourceRequests      ResourceRequest[]
+  venueBookings         VenueBooking[]
+  resourceBookings      ResourceBooking[]
+  approvalSteps         ApprovalStep[]
+  modificationRequests  ModificationRequest[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+
+  @@index([scheduleStart, scheduleEnd])
+  @@index([status, approvalStage])
+  @@index([schoolId, departmentId])
+  @@map("events")
+}
+
+enum EventStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  RUNNING
+  COMPLETED
+  REJECTED
+  TERMINATED
+}
+
+enum ApprovalStage {
+  DRAFT
+  SUBMITTED
+  HOD_APPROVED
+  DEAN_APPROVED
+  HEAD_APPROVED
+  APPROVED
+  REJECTED
+  MODIFICATION_REQUIRED
+}
+
+model EventRequest {
+  id          String   @id @default(cuid())
+  eventId     String   @map("event_id")
+  title       String
+  description String?
+  scheduleStart DateTime @map("schedule_start")
+  scheduleEnd   DateTime @map("schedule_end")
+  participantCount Int   @map("participant_count")
+  venueTypePreference String? @map("venue_type_preference")
+  requirements Json?    // JSON field for complex requirements
+  status      String   @default("draft")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("event_requests")
+}
+
+model ResourceRequest {
+  id              String  @id @default(cuid())
+  eventId         String  @map("event_id")
+  resourceId      String  @map("resource_id")
+  quantityNeeded  Int     @map("quantity_needed")
+  priority        String  @default("normal") // high, normal, low
+  justification   String?
+  isAllocated     Boolean @default(false) @map("is_allocated")
+  allocatedQuantity Int?  @map("allocated_quantity")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  resource Resource @relation(fields: [resourceId], references: [id])
+
+  @@unique([eventId, resourceId])
+  @@map("resource_requests")
+}
+
+// Venues System
+model Venue {
+  id               String  @id @default(cuid())
+  name             String
+  type             String  // auditorium, classroom, lab, outdoor, hall
+  capacity         Int
+  location         String
+  facilities       Json?   // JSON array of facility strings
+  isActive         Boolean @default(true) @map("is_active")
+  maintenanceMode  Boolean @default(false) @map("maintenance_mode")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  venueBookings         VenueBooking[]
+  maintenanceWindows    MaintenanceWindow[]
+  occupancySnapshots    OccupancySnapshot[]
+
+  @@index([type, capacity])
+  @@map("venues")
+}
+
+model VenueBooking {
+  id        String   @id @default(cuid())
+  venueId   String   @map("venue_id")
+  eventId   String   @map("event_id")
+  startTime DateTime @map("start_time")
+  endTime   DateTime @map("end_time")
+  status    String   @default("confirmed") // confirmed, provisional, cancelled
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  venue Venue @relation(fields: [venueId], references: [id])
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([venueId, startTime, endTime])
+  @@index([eventId])
+  @@map("venue_bookings")
+}
+
+// Resources System
+model Resource {
+  id              String    @id @default(cuid())
+  name            String
+  category        ResourceCategory
+  totalQuantity   Int       @map("total_quantity")
+  availableQuantity Int     @map("available_quantity")
+  unit            String    // pieces, hours, kg, etc.
+  description     String?
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  resourceRequests   ResourceRequest[]
+  resourceBookings   ResourceBooking[]
+  maintenanceWindows MaintenanceWindow[]
+
+  @@map("resources")
+}
+
+enum ResourceCategory {
+  EQUIPMENT
+  FOOD
+  FACILITIES
+  ITC_SERVICES
+  HOSTEL
+  VOLUNTEERS
+}
+
+model ResourceBooking {
+  id         String   @id @default(cuid())
+  resourceId String   @map("resource_id")
+  eventId    String   @map("event_id")
+  quantity   Int
+  startTime  DateTime @map("start_time")
+  endTime    DateTime @map("end_time")
+  status     String   @default("confirmed") // confirmed, provisional, cancelled
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  resource Resource @relation(fields: [resourceId], references: [id])
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([resourceId, startTime, endTime])
+  @@index([eventId])
+  @@map("resource_bookings")
+}
+
+// Approval System
+model ApprovalStep {
+  id         String   @id @default(cuid())
+  eventId    String   @map("event_id")
+  approverId String   @map("approver_id")
+  stage      ApprovalStage
+  action     ApprovalAction
+  comments   String?
+  timestamp  DateTime @default(now())
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  event    Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  approver User  @relation(fields: [approverId], references: [id])
+
+  @@index([eventId, stage])
+  @@map("approval_steps")
+}
+
+enum ApprovalAction {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  MODIFICATION_REQUIRED
+}
+
+model ModificationRequest {
+  id          String   @id @default(cuid())
+  eventId     String   @map("event_id")
+  requestedBy String   @map("requested_by")
+  field       String   // Which field is being modified
+  oldValue    Json     @map("old_value")
+  newValue    Json     @map("new_value")
+  reason      String
+  status      String   @default("pending") // pending, approved, rejected
+  approvedBy  String?  @map("approved_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("modification_requests")
+}
+
+// Maintenance & Priority System
+model MaintenanceWindow {
+  id          String   @id @default(cuid())
+  venueId     String?  @map("venue_id")
+  resourceId  String?  @map("resource_id")
+  startTime   DateTime @map("start_time")
+  endTime     DateTime @map("end_time")
+  description String
+  impact      String   // full_unavailable, reduced_capacity, etc.
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  venue    Venue?    @relation(fields: [venueId], references: [id])
+  resource Resource? @relation(fields: [resourceId], references: [id])
+
+  @@map("maintenance_windows")
+}
+
+model PriorityOverride {
+  id         String   @id @default(cuid())
+  eventId    String   @map("event_id")
+  oldPriority Int     @map("old_priority")
+  newPriority Int     @map("new_priority")
+  reason     String
+  authorizedBy String @map("authorized_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("priority_overrides")
+}
+
+// Notifications System
+model Notification {
+  id        String             @id @default(cuid())
+  userId    String             @map("user_id")
+  eventId   String?            @map("event_id")
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?              // Additional structured data
+  isRead    Boolean            @default(false) @map("is_read")
+  createdAt DateTime           @default(now()) @map("created_at")
+
+  user  User   @relation(fields: [userId], references: [id])
+  event Event? @relation(fields: [eventId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  EVENT_SUBMITTED
+  EVENT_APPROVED
+  EVENT_REJECTED
+  EVENT_MODIFICATION_REQUIRED
+  RESOURCE_CONFLICT
+  SCHEDULE_CHANGE
+  MAINTENANCE_ALERT
+  PRIORITY_OVERRIDE
+}
+
+// Audit & Logging
+model AuditLog {
+  id         String   @id @default(cuid())
+  eventId    String?  @map("event_id")
+  userId     String   @map("user_id")
+  action     String   // create, update, delete, approve, reject, etc.
+  entityType String   @map("entity_type") // event, resource, venue, etc.
+  entityId   String   @map("entity_id")
+  oldData    Json?    @map("old_data")
+  newData    Json?    @map("new_data")
+  metadata   Json?    // Request ID, IP address, etc.
+  timestamp  DateTime @default(now())
+
+  event Event? @relation(fields: [eventId], references: [id])
+
+  @@index([userId, timestamp])
+  @@index([entityType, entityId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// Occupancy & Analytics
+model OccupancySnapshot {
+  id                String   @id @default(cuid())
+  venueId           String   @map("venue_id")
+  date              DateTime
+  timeSlot          String   @map("time_slot") // 0900-1000, 1000-1100, etc.
+  occupancyStatus   String   @map("occupancy_status") // free, occupied, maintenance
+  eventId           String?  @map("event_id")
+  utilizationPercent Int     @map("utilization_percent")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  venue Venue @relation(fields: [venueId], references: [id])
+
+  @@unique([venueId, date, timeSlot])
+  @@index([date, timeSlot])
+  @@map("occupancy_snapshots")
+}
+
+// Background Jobs
+model BackgroundJob {
+  id          String   @id @default(cuid())
+  type        JobType
+  payload     Json
+  status      JobStatus @default(PENDING)
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3) @map("max_attempts")
+  error       String?
+  scheduledFor DateTime @map("scheduled_for")
+  completedAt  DateTime? @map("completed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([status, scheduledFor])
+  @@index([type, status])
+  @@map("background_jobs")
+}
+
+enum JobType {
+  AUTO_RESOURCE_RELEASE
+  CLEANUP_STALE_ALLOCATIONS
+  REFRESH_OCCUPANCY_SNAPSHOTS
+  NOTIFICATION_RETRY
+  EVENT_REMINDER
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  RETRYING
+}
